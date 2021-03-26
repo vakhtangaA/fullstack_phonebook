@@ -1,95 +1,96 @@
+require("dotenv").config();
+
 const { response, request } = require("express");
 const express = require("express");
 const morgan = require("morgan");
 const cors = require("cors");
+const mongoose = require("mongoose");
+
+// local
+
+const Contact = require("./models/contact");
 
 const app = express();
-app.use(cors());
 
+app.use(cors());
 app.use(express.static("build"));
 app.use(express.json());
-
-morgan.token("body", (req, res) => JSON.stringify(req.body));
 app.use(morgan("tiny"));
 app.use(morgan(":body"));
 
-let persons = [
-	{
-		id: 1,
-		name: "Arto Hellas",
-		number: "312312-321-3-123-1",
-	},
-	{
-		id: 2,
-		name: "Ada Lovelace",
-		number: "31232-23-21-312-3-",
-	},
-	{
-		id: 3,
-		name: "Dan abramov",
-		number: "2213-23123-12-31",
-	},
-];
-
-app.get("/", (request, response) => {
-	response.send("<h1>Hello World</h1>");
-	// response.setHeader("Access-Control-Allow-Origin", "*");
-});
+morgan.token("body", (req, res) => JSON.stringify(req.body));
 
 app.get("/api/persons", (request, response) => {
-	response.json(persons);
+	Contact.find({}).then(contacts => {
+		response.json(contacts);
+		// console.log(contacts);
+	});
 });
 
 app.get("/info", (request, response) => {
 	const date = new Date();
-	const personsNumber = app.length;
 
-	response.send(`<p>Phonebook has info for ${personsNumber}<br> ${date}`);
+	Contact.countDocuments({}, function (err, count) {
+		if (err) {
+			console.log(err);
+		} else {
+			response.send(
+				`<p>Phonebook has info for ${count} persons<br> ${date}`
+			);
+		}
+	});
 });
 
-app.get("/api/persons/:id", (request, response) => {
-	const id = Number(request.params.id);
-	const person = persons.find(contact => contact.id === id);
-
-	if (person) {
-		response.json(person);
-	} else {
-		response.status(404).end();
-	}
+app.get("/api/persons/:id", (request, response, next) => {
+	Contact.findById(request.params.id)
+		.then(contact => {
+			if (contact) {
+				response.json(contact);
+			} else {
+				response.status(404).end();
+			}
+		})
+		.catch(error => {
+			next(error);
+		});
 });
 
-app.delete("/api/persons/:id", (request, response) => {
-	const id = Number(request.params.id);
-	persons = persons.filter(person => person.id !== id);
-	response.status(204).end();
+app.delete("/api/persons/:id", (request, response, next) => {
+	Contact.findByIdAndRemove(request.params.id)
+		.then(contact => {
+			response.status(204).end();
+		})
+		.catch(error => next(error));
 });
 
 app.post("/api/persons", (request, response) => {
-	const id = Math.floor(Math.random() * 10000);
 	const body = request.body;
-	const names = persons.map(person => {
-		return person.name;
-	});
-
-	if (!body.number || !body.name) {
-		return response.status(400).json({
-			error: "fill name and number!",
-		});
-	} else if (names.includes(body.name)) {
-		return response.status(400).json({
-			error: "name already exists",
-		});
+	if (body.name === undefined) {
+		return response.status(400).json({ error: "content missing" });
 	}
+	const contact = new Contact({
+		name: body.name,
+		number: body.number,
+		date: new Date(),
+	});
+	contact.save().then(savedContact => {
+		response.json(savedContact);
+	});
+});
 
-	const person = {
-		id: id,
+app.put("/api/persons/:id", (request, response, next) => {
+	const body = request.body;
+
+	const contact = {
 		name: body.name,
 		number: body.number,
 	};
 
-	persons = persons.concat(person);
-
-	response.json(person);
+	Contact.findByIdAndUpdate(request.params.id, contact, { new: true })
+		.then(updatedContact => {
+			response.json(updatedContact);
+		})
+		.catch(error => next(error));
 });
 
 const unknownEndpoint = (request, response) => {
@@ -97,6 +98,18 @@ const unknownEndpoint = (request, response) => {
 };
 
 app.use(unknownEndpoint);
+
+const errorHandler = (error, request, response, next) => {
+	console.error(error.message);
+
+	if (error.name === "CastError") {
+		return response.status(400).send({ error: "malformatted id" });
+	}
+
+	next(error);
+};
+
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
